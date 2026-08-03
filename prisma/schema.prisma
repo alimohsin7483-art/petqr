@@ -1,0 +1,575 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────────────────
+
+enum UserRole {
+  OWNER
+  VET
+  SHELTER
+  BREEDER
+  PET_STORE
+  INSURER
+  NGO
+  MUNICIPAL
+  ADMIN
+}
+
+enum OrganizationType {
+  VET_CLINIC
+  SHELTER
+  PET_STORE
+  BREEDER
+  INSURER
+  NGO
+  MUNICIPAL_DEPT
+}
+
+enum PetSpecies {
+  DOG
+  CAT
+  BIRD
+  RABBIT
+  REPTILE
+  OTHER
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+enum BillingProvider {
+  STRIPE
+  RAZORPAY
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+  UNCOLLECTIBLE
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum NotificationChannel {
+  EMAIL
+  WHATSAPP
+  PUSH
+}
+
+enum NotificationJobStatus {
+  QUEUED
+  SENDING
+  SENT
+  FAILED
+  RETRYING
+}
+
+enum FoundReportStatus {
+  SUBMITTED
+  ACKNOWLEDGED
+  RESOLVED
+  DISMISSED
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAID
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum PhysicalTagStatus {
+  UNCLAIMED
+  CLAIMED
+}
+
+// ─────────────────────────────────────────────────────────────
+// IDENTITY & ORGANIZATIONS
+// ─────────────────────────────────────────────────────────────
+
+model Organization {
+  id        String           @id @default(uuid()) @db.Uuid
+  type      OrganizationType
+  name      String
+  slug      String           @unique
+  members   User[]
+  pets      Pet[]
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  deletedAt DateTime?
+
+  @@map("organizations")
+}
+
+model User {
+  id                 String    @id @default(uuid()) @db.Uuid
+  authUserId         String    @unique // FK to Supabase auth.users.id
+  email              String    @unique
+  fullName           String?
+  phone              String?
+  avatarUrl          String?
+  role               UserRole  @default(OWNER)
+  organizationId     String?   @db.Uuid
+  organization       Organization? @relation(fields: [organizationId], references: [id])
+  emailVerifiedAt    DateTime?
+  stripeCustomerId   String?   @unique
+  razorpayCustomerId String?   @unique
+
+  pets               Pet[]
+  emergencyContacts  EmergencyContact[]
+  subscriptions      Subscription[]
+  notificationPrefs  NotificationPreference?
+  supportTickets     SupportTicket[]
+  auditLogs          AuditLog[]
+  orders             Order[]
+
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+
+  @@index([organizationId])
+  @@index([role])
+  @@map("users")
+}
+
+model EmergencyContact {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id])
+  name      String
+  phone     String
+  relation  String?
+  priority  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  @@index([userId])
+  @@map("emergency_contacts")
+}
+
+// ─────────────────────────────────────────────────────────────
+// PETS
+// ─────────────────────────────────────────────────────────────
+
+model Pet {
+  id              String       @id @default(uuid()) @db.Uuid
+  ownerId         String       @db.Uuid
+  owner           User         @relation(fields: [ownerId], references: [id])
+  organizationId  String?      @db.Uuid
+  organization    Organization? @relation(fields: [organizationId], references: [id])
+
+  publicSlug      String       @unique @db.VarChar(16)
+  name            String
+  species         PetSpecies
+  breed           String?
+  color           String?
+  dob             DateTime?
+  weightKg        Decimal?     @db.Decimal(5, 2)
+  avatarUrl       String?
+  bio             String?
+  microchipId     String?      @unique
+
+  isLost          Boolean      @default(false)
+  lostSince       DateTime?
+
+  // Owner-controlled visibility on the public scan page — nothing here is
+  // shown to a finder unless the owner has explicitly left it on.
+  showCallButton     Boolean    @default(true)
+  showWhatsappButton Boolean    @default(true)
+  showLastSeenNote   Boolean    @default(true)
+
+  photos          PetPhoto[]
+  vaccinations    Vaccination[]
+  medicalRecords  MedicalRecord[]
+  qrCodes         QrCode[]
+  lostReports     LostReport[]
+  foundReports    FoundReport[]
+  physicalTags    PhysicalTag[]
+
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  deletedAt       DateTime?
+
+  @@index([ownerId])
+  @@index([publicSlug])
+  @@index([organizationId])
+  @@map("pets")
+}
+
+model PetPhoto {
+  id        String   @id @default(uuid()) @db.Uuid
+  petId     String   @db.Uuid
+  pet       Pet      @relation(fields: [petId], references: [id])
+  url       String
+  isPrimary Boolean  @default(false)
+  createdAt DateTime @default(now())
+  deletedAt DateTime?
+
+  @@index([petId])
+  @@map("pet_photos")
+}
+
+model QrCode {
+  id         String   @id @default(uuid()) @db.Uuid
+  petId      String   @db.Uuid
+  pet        Pet      @relation(fields: [petId], references: [id])
+  slug       String   @unique @db.VarChar(16)
+  version    Int      @default(1)
+  isActive   Boolean  @default(true)
+  designMeta Json?    // color/theme for printable tag, paid tiers only
+  createdAt  DateTime @default(now())
+  revokedAt  DateTime?
+
+  @@index([petId])
+  @@map("qr_codes")
+}
+
+model Vaccination {
+  id           String   @id @default(uuid()) @db.Uuid
+  petId        String   @db.Uuid
+  pet          Pet      @relation(fields: [petId], references: [id])
+  name         String
+  administeredAt DateTime
+  nextDueAt    DateTime?
+  vetName      String?
+  documentUrl  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+
+  @@index([petId])
+  @@index([nextDueAt])
+  @@map("vaccinations")
+}
+
+model MedicalRecord {
+  id          String   @id @default(uuid()) @db.Uuid
+  petId       String   @db.Uuid
+  pet         Pet      @relation(fields: [petId], references: [id])
+  title       String
+  description String?
+  recordedAt  DateTime
+  vetName     String?
+  documentUrl String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  @@index([petId])
+  @@map("medical_records")
+}
+
+// ─────────────────────────────────────────────────────────────
+// LOST / FOUND
+// ─────────────────────────────────────────────────────────────
+
+model LostReport {
+  id          String   @id @default(uuid()) @db.Uuid
+  petId       String   @db.Uuid
+  pet         Pet      @relation(fields: [petId], references: [id])
+  lastSeenAt  DateTime?
+  lastSeenLat Decimal? @db.Decimal(9, 6)
+  lastSeenLng Decimal? @db.Decimal(9, 6)
+  notes       String?
+  resolvedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([petId])
+  @@map("lost_reports")
+}
+
+model FoundReport {
+  id            String            @id @default(uuid()) @db.Uuid
+  petId         String            @db.Uuid
+  pet           Pet               @relation(fields: [petId], references: [id])
+  finderName    String?
+  finderPhone   String?
+  finderEmail   String?
+  locationLat   Decimal?          @db.Decimal(9, 6)
+  locationLng   Decimal?          @db.Decimal(9, 6)
+  message       String?
+  status        FoundReportStatus @default(SUBMITTED)
+  isRead        Boolean           @default(false)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([petId])
+  @@index([status])
+  @@map("found_reports")
+}
+
+// ─────────────────────────────────────────────────────────────
+// PHYSICAL TAG STORE
+// ─────────────────────────────────────────────────────────────
+
+model Product {
+  id             String   @id @default(uuid()) @db.Uuid
+  name           String
+  description    String?
+  imageUrl       String?
+  priceUsd       Decimal  @db.Decimal(8, 2)
+  priceInr       Decimal  @db.Decimal(10, 2)
+  isActive       Boolean  @default(true)
+  visualVariant  String   @default("steel") // "steel" | "brass" | "black" — used by the shop UI illustration
+  stripePriceId  String?  // one-time (non-recurring) Stripe Price ID
+  orders         Order[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("products")
+}
+
+model Order {
+  id                 String        @id @default(uuid()) @db.Uuid
+  userId             String        @db.Uuid
+  user               User          @relation(fields: [userId], references: [id])
+  productId          String        @db.Uuid
+  product            Product       @relation(fields: [productId], references: [id])
+  quantity           Int           @default(1)
+  status             OrderStatus   @default(PENDING_PAYMENT)
+  provider           BillingProvider
+  providerOrderId    String?       // Stripe Checkout Session ID or Razorpay Order ID
+  providerPaymentId  String?
+  amount             Decimal       @db.Decimal(10, 2)
+  currency           String        @db.VarChar(3)
+
+  shippingName       String?
+  shippingLine1      String?
+  shippingLine2      String?
+  shippingCity       String?
+  shippingState      String?
+  shippingPostalCode String?
+  shippingCountry    String?
+  shippingPhone      String?
+
+  physicalTags       PhysicalTag[]
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@map("orders")
+}
+
+// A pre-manufactured physical tag. Slugs are generated in batches BEFORE
+// anything is sold — printed onto physical tags, then assigned to an order
+// once paid, then "claimed" by the customer (linked to a pet) once the
+// physical tag arrives and they scan it for the first time.
+model PhysicalTag {
+  id         String            @id @default(uuid()) @db.Uuid
+  slug       String            @unique @db.VarChar(16)
+  status     PhysicalTagStatus @default(UNCLAIMED)
+  orderId    String?           @db.Uuid
+  order      Order?            @relation(fields: [orderId], references: [id])
+  petId      String?           @db.Uuid
+  pet        Pet?              @relation(fields: [petId], references: [id])
+  claimedAt  DateTime?
+  createdAt  DateTime          @default(now())
+
+  @@index([orderId])
+  @@index([petId])
+  @@map("physical_tags")
+}
+
+// ─────────────────────────────────────────────────────────────
+// BILLING
+// ─────────────────────────────────────────────────────────────
+
+model Plan {
+  id             String   @id @default(uuid()) @db.Uuid
+  key            String   @unique // "free" | "plus" | "pro"
+  name           String
+  priceMonthlyUsd Decimal @db.Decimal(8, 2)
+  priceMonthlyInr Decimal @db.Decimal(10, 2)
+  maxPets        Int
+  features       Json
+  isActive       Boolean  @default(true)
+  stripePriceId  String?  // Stripe recurring Price ID for this plan's monthly price
+  razorpayPlanId String?  // Razorpay Plan ID (created in Razorpay dashboard/API)
+  subscriptions  Subscription[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("plans")
+}
+
+model Subscription {
+  id                    String             @id @default(uuid()) @db.Uuid
+  userId                String             @db.Uuid
+  user                  User               @relation(fields: [userId], references: [id])
+  planId                String             @db.Uuid
+  plan                  Plan               @relation(fields: [planId], references: [id])
+  provider              BillingProvider
+  providerCustomerId    String?
+  providerSubscriptionId String?           @unique
+  status                SubscriptionStatus @default(TRIALING)
+  currentPeriodEnd      DateTime?
+  cancelAtPeriodEnd     Boolean            @default(false)
+  invoices              Invoice[]
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@map("subscriptions")
+}
+
+model Invoice {
+  id              String        @id @default(uuid()) @db.Uuid
+  subscriptionId  String        @db.Uuid
+  subscription    Subscription  @relation(fields: [subscriptionId], references: [id])
+  providerInvoiceId String?     @unique
+  amountDue       Decimal       @db.Decimal(10, 2)
+  currency        String        @db.VarChar(3)
+  status          InvoiceStatus @default(OPEN)
+  payments        Payment[]
+  issuedAt        DateTime      @default(now())
+  dueAt           DateTime?
+  paidAt          DateTime?
+
+  @@index([subscriptionId])
+  @@map("invoices")
+}
+
+model Payment {
+  id                  String        @id @default(uuid()) @db.Uuid
+  invoiceId           String        @db.Uuid
+  invoice             Invoice       @relation(fields: [invoiceId], references: [id])
+  provider            BillingProvider
+  providerPaymentId   String?       @unique
+  amount              Decimal       @db.Decimal(10, 2)
+  currency            String        @db.VarChar(3)
+  status              PaymentStatus @default(PENDING)
+  failureReason       String?
+  refundedAmount      Decimal?      @db.Decimal(10, 2)
+  createdAt           DateTime      @default(now())
+
+  @@index([invoiceId])
+  @@index([status])
+  @@map("payments")
+}
+
+model Coupon {
+  id             String   @id @default(uuid()) @db.Uuid
+  code           String   @unique
+  percentOff     Int?
+  amountOffUsd   Decimal? @db.Decimal(8, 2)
+  maxRedemptions Int?
+  redeemedCount  Int      @default(0)
+  expiresAt      DateTime?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  @@map("coupons")
+}
+
+// ─────────────────────────────────────────────────────────────
+// NOTIFICATIONS
+// ─────────────────────────────────────────────────────────────
+
+model NotificationPreference {
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @unique @db.Uuid
+  user            User     @relation(fields: [userId], references: [id])
+  emailEnabled    Boolean  @default(true)
+  whatsappEnabled Boolean  @default(true)
+  pushEnabled     Boolean  @default(true)
+  updatedAt       DateTime @updatedAt
+
+  @@map("notification_preferences")
+}
+
+model NotificationJob {
+  id           String                 @id @default(uuid()) @db.Uuid
+  channel      NotificationChannel
+  templateKey  String                 // e.g. "welcome", "lost_mode_enabled"
+  entityType   String                 // polymorphic target, e.g. "user" | "pet"
+  entityId     String                 @db.Uuid
+  payload      Json
+  status       NotificationJobStatus  @default(QUEUED)
+  attempts     Int                    @default(0)
+  lastError    String?
+  scheduledFor DateTime               @default(now())
+  sentAt       DateTime?
+  createdAt    DateTime               @default(now())
+
+  @@index([status, scheduledFor])
+  @@index([entityType, entityId])
+  @@map("notification_jobs")
+}
+
+// ─────────────────────────────────────────────────────────────
+// ADMIN / SUPPORT / AUDIT
+// ─────────────────────────────────────────────────────────────
+
+model SupportTicket {
+  id        String              @id @default(uuid()) @db.Uuid
+  userId    String              @db.Uuid
+  user      User                @relation(fields: [userId], references: [id])
+  subject   String
+  body      String
+  status    SupportTicketStatus @default(OPEN)
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@map("support_tickets")
+}
+
+model SystemSetting {
+  id        String   @id @default(uuid()) @db.Uuid
+  key       String   @unique
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  actorId    String?  @db.Uuid
+  actor      User?    @relation(fields: [actorId], references: [id])
+  action     String   // e.g. "pet.created", "subscription.canceled"
+  entityType String
+  entityId   String   @db.Uuid
+  before     Json?
+  after      Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@map("audit_logs")
+}

@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ink: #132a3e;
+  --paper: #f6f3ec;
+  --brass: #c98a3b;
+  --line: #ded7c7;
+}
+
+html,
+body {
+  background-color: var(--paper);
+  color: var(--ink);
+}
+
+/* Focus states must stay visible everywhere — never suppressed. */
+:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* The signature element: a punched loop notch at the top of the auth card,
+   like the hole in a stamped pet ID tag. Pure CSS, no image asset. */
+.tag-notch::before {
+  content: "";
+  position: absolute;
+  top: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 28px;
+  height: 28px;
+  border-radius: 9999px;
+  background: var(--paper);
+  border: 3px solid var(--line);
+}
+
+.tag-notch::after {
+  content: "";
+  position: absolute;
+  top: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  background: var(--paper);
+  box-shadow: inset 0 0 0 2px var(--ink);
+}
