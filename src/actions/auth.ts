@@ -20,6 +20,7 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { queueNotification } from "@/services/notifications/queue";
 import { sendMetaConversionEvent } from "@/services/analytics/meta-capi";
+import { Prisma } from "@prisma/client";
 import crypto from "crypto";
 
 type ActionResult = { error: string } | { success: true; eventId?: string };
@@ -48,15 +49,29 @@ export async function signUpAction(input: SignUpInput): Promise<ActionResult> {
   // Mirror the auth user into our own `users` table immediately so every
   // other table's foreign keys (pets, subscriptions, etc.) have something
   // to point at even before the email is verified.
-  const user = await prisma.user.upsert({
-    where: { authUserId: data.user.id },
-    update: {},
-    create: {
-      authUserId: data.user.id,
-      email: parsed.data.email,
-      fullName: parsed.data.fullName,
-    },
-  });
+  let user;
+  try {
+    user = await prisma.user.upsert({
+      where: { authUserId: data.user.id },
+      update: {},
+      create: {
+        authUserId: data.user.id,
+        email: parsed.data.email,
+        fullName: parsed.data.fullName,
+      },
+    });
+  } catch (err) {
+    // P2002 = unique constraint violation. Happens when this email already
+    // has a row in `users` tied to a different authUserId — e.g. a prior
+    // signup attempt, or Supabase issuing a fresh auth user id for an email
+    // that was never confirmed. Surface a clean message instead of a 500.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      return {
+        error: "An account with this email already exists. Try signing in instead, or reset your password if you've forgotten it.",
+      };
+    }
+    throw err;
+  }
 
   await queueNotification({
     channel: "EMAIL",
